@@ -1,0 +1,11 @@
+// OdaiAttack ターゲットの共通ビルド設定（Debug / Release の両方に割り当て済み）。
+//
+// TypeSafe の API キーは同じフォルダの Secrets.xcconfig（git 管理外）に書く。
+// Secrets.xcconfig が無くてもビルドは通り、アプリ側で「API キー未設定」と表示される。
+// Secrets.xcconfig の中身は次の1行:
+//   TYPESAFE_API_KEY = <https://console.typesafe.ai/keys で発行したキー>
+// 値は引用符で囲まない（囲むと引用符ごとキーになる）。
+
+TYPESAFE_API_KEY =
+
+#include? "Secrets.xcconfig"
