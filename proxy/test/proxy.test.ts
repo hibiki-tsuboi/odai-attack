@@ -34,6 +34,22 @@ function appRequest(): Record<string, any> {
 	};
 }
 
+/** アプリ（WordJudge.bestAnswer）が送る、ベスト回答を選ぶリクエストと同じ形。 */
+function bestAnswerRequest(options: string[] = ["トマト", "ポスト", "金魚"]): Record<string, any> {
+	return {
+		model: "jev-1.13.0",
+		questions: {
+			best_answer: {
+				criteria: Object.fromEntries(options.map((option) => [option, null])),
+				instructions:
+					"Which answer is the best answer of this round for the word-game category `topic`? The best answer fits `topic` well, and few players would think of it.",
+				type: "choice",
+			},
+		},
+		state: { topic: "赤いもの" },
+	};
+}
+
 function env(overrides: Partial<ProxyEnv> = {}): ProxyEnv {
 	const allow = { limit: async () => ({ success: true }) };
 	return {
@@ -85,12 +101,38 @@ describe("validateSystemOneRequest", () => {
 			many.questions[id] = { type: "noul", instructions: "Is it red?" };
 		}
 		assert.match(validateSystemOneRequest(many, MODELS) ?? "", /1 to 4 entries/);
-		const choice = appRequest();
-		choice.questions.fits_topic = { type: "choice", instructions: "Which?", criteria: { a: null } };
-		assert.match(validateSystemOneRequest(choice, MODELS) ?? "", /type must be noul or score/);
+		const unknown = appRequest();
+		unknown.questions.fits_topic = { type: "rank", instructions: "Which?" };
+		assert.match(validateSystemOneRequest(unknown, MODELS) ?? "", /type must be noul, score, or choice/);
 		const levels = appRequest();
 		levels.questions.typicality.criteria = Array.from({ length: 11 }, (_, i) => `level ${i}`);
 		assert.match(validateSystemOneRequest(levels, MODELS) ?? "", /2 to 10 levels/);
+	});
+});
+
+describe("validateSystemOneRequest (best answer)", () => {
+	it("accepts the best answer request the app sends", () => {
+		assert.equal(validateSystemOneRequest(bestAnswerRequest(), MODELS), null);
+	});
+
+	it("rejects too many, too few, or long options", () => {
+		const many = bestAnswerRequest(Array.from({ length: 31 }, (_, i) => `言葉${i}`));
+		assert.match(validateSystemOneRequest(many, MODELS) ?? "", /2 to 30 options/);
+		assert.match(validateSystemOneRequest(bestAnswerRequest(["トマト"]), MODELS) ?? "", /2 to 30 options/);
+		const long = bestAnswerRequest(["トマト", "あ".repeat(41)]);
+		assert.match(validateSystemOneRequest(long, MODELS) ?? "", /each option/);
+		const described = bestAnswerRequest();
+		described.questions.best_answer.criteria["トマト"] = "x".repeat(501);
+		assert.match(validateSystemOneRequest(described, MODELS) ?? "", /description of トマト/);
+	});
+
+	it("still requires the topic and allows nothing else in state", () => {
+		const noTopic = bestAnswerRequest();
+		noTopic.state = { word: "トマト" };
+		assert.match(validateSystemOneRequest(noTopic, MODELS) ?? "", /only topic/);
+		const extra = bestAnswerRequest();
+		extra.state.document = "long text";
+		assert.match(validateSystemOneRequest(extra, MODELS) ?? "", /only topic/);
 	});
 });
 

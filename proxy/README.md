@@ -5,10 +5,10 @@ TypeSafe の API キーはこの Worker の Secret にだけ置き、アプリ�
 
 ## していること
 
-- `POST /v1/systemone` だけを受け付け、アプリと同じ形のリクエストか確かめる（`src/validate.ts`）。
-  - モデルは `wrangler.jsonc` の `ALLOWED_MODELS` にあるものだけ
-  - `state` はお題（40文字まで）と言葉（40文字まで）だけ
-  - 質問は4つまでで、種類は noul か score。質問文と判定基準は1つ500文字まで。本文は 8 KB まで
+- `POST /v1/systemone` だけを受け付け、アプリと同じ形のリクエストか確かめる（`src/validate.ts`）。アプリが送るのは2種類:
+  - 言葉の判定: `state` はお題と言葉。質問は noul と score
+  - ベスト回答: `state` はお題だけ。質問は、正解した言葉を選択肢にした choice（選択肢は30個まで、1つ40文字まで）
+  - どちらも、モデルは `wrangler.jsonc` の `ALLOWED_MODELS` にあるものだけ。お題と言葉は40文字まで、質問は4つまで、質問文と判定基準は1つ500文字まで、本文は 8 KB まで
 - 回数を制限する。アプリのインストールごとの ID（`X-OdaiAttack-Install-ID` ヘッダー）ごとに 120回/分、全体で 1000回/分まで（どちらも Cloudflare のデータセンターごとに数える）。
 - 通ったリクエストに API キーを付けて TypeSafe に送り、応答をそのまま返す。中継サーバー自身のエラーも、TypeSafe と同じ `{"detail": {"error_type", "message"}}` の形で返す。
 

@@ -21,7 +21,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ドキュメントによると Jev の主な学習言語は英語で、日本語は精度が落ちる。そのため質問文（`instructions` / `criteria`）は英語で書き、お題と言葉は日本語のまま `state` に入れている。
 - 質問 ID（`questions` のキー）はモデルに送られない。質問の意味はすべて `instructions` と `criteria` に書く。
 - JSON のキー変換（`convertFromSnakeCase` など）は使わない。質問 ID などの辞書のキーまで変換されてしまう。
-- エラー時の本文は `{"detail": {"error_type": ..., "message": ...}}`。キーが無いと 403、無効なキーだと 401（ドキュメントには 401 しか書かれていない）。429 / 529 は時間をおいて再試行する。レスポンスヘッダー `x-typesafe-request-id` にリクエスト ID が入る。
+- エラー時の本文は `{"detail": {"error_type": ..., "message": ...}}`。キーが無いと 403、無効なキーだと 401（ドキュメントには 401 しか書かれていない）。レスポンスヘッダー `x-typesafe-request-id` にリクエスト ID が入る。
+- 408・429・5xx（529 を含む）とタイムアウトなどの接続エラーは、`SystemOneHTTP` が `JevRetryPolicy` に従って待ってから送り直す（待ち時間は倍々で最大25%ばらつかせ、`Retry-After` があれば従う）。言葉の判定は1回4秒で切って1回だけ送り直し、ベスト回答は公式 SDK の既定値（1回10秒、2回まで）。設定は `WordJudge` の `judgmentRetry` / `bestAnswerRetry`。2026-09-28 の夜は、TypeSafe のステータスページが正常なのに 503（upstream connect error）や10秒以上の応答が多く混ざった。
 
 ## 設計方針
 
@@ -37,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `OdaiAttack/Jev/`: System One API の型、`JevClient` プロトコル、2つの実装（`ProxyJevClient` / `DirectJevClient`、通信は共通の `SystemOneHTTP`）、設定から実装を選ぶ `makeConfiguredJevClient()`。ゲーム固有の知識は持たない。
 - `OdaiAttack/WordJudge.swift`: お題と言葉から Jev への質問（Noul: 当てはまるか / Score: 典型度）を組み立て、回答を `WordJudgment` にまとめる。質問文・Score の段階・固定するモデル版はここに集める。通信時間の計測とログもここで行う（どの `JevClient` 実装でも同じ条件で測れるように）。
-- `OdaiAttack/Game/`: ゲーム本体（フェーズ3）。`GameModel` がタイトル → お題とカウントダウン → 10秒間声で言う → 結果を進める。時間・正解のしきい値・点数（意外な言葉のボーナス）は `GameRules.swift`、お題は `Topics.swift`。
+- `OdaiAttack/Game/`: ゲーム本体（フェーズ3）。`GameModel` がタイトル → お題とカウントダウン → 10秒間声で言う → 結果を進める。結果画面では、正解した言葉の中から Jev の Choice で「今回のベスト回答」を1つ選んで発表する（点数は変えない。質問は `WordJudge.bestAnswer`）。時間・正解のしきい値・点数（意外な言葉のボーナス）・ベスト回答の条件は `GameRules.swift`、お題は `Topics.swift`。
 - `OdaiAttack/SpokenWordList.swift`: 声で確定した言葉を受け取り、判定を言葉ごとに並行して送り、結果を言った順に出す（前の言葉の判定を最大1秒待つ）。同じ言葉（ひらがな・カタカナなどの違いは無視）は判定しない。ゲームと音声判定画面で共有する。
 - `OdaiAttack/Speech/`: 声を言葉に区切る部分。`SpeechWordRecognizer` が音声認識と区切りを受け持ち、音声は `append(_:)` で受け取る。iOS 専用のマイクまわりは `Audio/` に分けているので、`Speech/` は Mac でもコンパイルして動かせる。区切りのパラメータはすべて `SpeechTuning.swift` にある。
 - `OdaiAttack/Audio/`: `AudioIO`（マイク入力と効果音の出力を1つの AVAudioEngine で扱う）と、コードで作る効果音 `SoundEffect`。

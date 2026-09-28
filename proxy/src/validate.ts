@@ -1,5 +1,8 @@
 // アプリが送る判定リクエスト（TypeSafe System One API の形）だけを通すための確認。
-// お題と言葉は短い文字列に限るので、長い文章の判定など、ゲーム以外の用途には使えない。
+// アプリが送るのは2種類:
+// - 言葉の判定: state はお題と言葉。質問は noul と score
+// - ベスト回答: state はお題だけ。質問は、正解した言葉を選択肢にした choice
+// お題・言葉・選択肢は短い文字列に限るので、長い文章の判定など、ゲーム以外の用途には使えない。
 
 export const LIMITS = {
 	/** リクエスト本文の最大バイト数。アプリのリクエストは 1.5 KB ほど。 */
@@ -14,6 +17,8 @@ export const LIMITS = {
 	text: 500,
 	/** Score の段階の数（API の上限と同じ）。 */
 	scoreLevels: 10,
+	/** Choice の選択肢の数。ベスト回答では、1ラウンドに正解した言葉の数になる。 */
+	choiceOptions: 30,
 } as const;
 
 type JSONObject = Record<string, unknown>;
@@ -33,13 +38,14 @@ export function validateSystemOneRequest(body: unknown, allowedModels: readonly 
 	}
 
 	const state = body.state;
-	if (!isObject(state) || Object.keys(state).sort().join(",") !== "topic,word") {
-		return "state must be an object with only topic and word";
+	const stateKeys = isObject(state) ? Object.keys(state).sort().join(",") : "";
+	if (!isObject(state) || (stateKeys !== "topic,word" && stateKeys !== "topic")) {
+		return "state must be an object with only topic and word, or only topic";
 	}
 	if (!isText(state.topic, LIMITS.topic)) {
 		return `state.topic must be a non-empty string of at most ${LIMITS.topic} characters`;
 	}
-	if (!isText(state.word, LIMITS.word)) {
+	if ("word" in state && !isText(state.word, LIMITS.word)) {
 		return `state.word must be a non-empty string of at most ${LIMITS.word} characters`;
 	}
 
@@ -101,8 +107,26 @@ function validateQuestion(question: unknown): string | null {
 				return `each level must be a non-empty string of at most ${LIMITS.text} characters`;
 			}
 			return null;
+		case "choice": {
+			if (!isObject(criteria)) {
+				return "criteria must be an object";
+			}
+			const options = Object.entries(criteria);
+			if (options.length < 2 || options.length > LIMITS.choiceOptions) {
+				return `criteria must have 2 to ${LIMITS.choiceOptions} options`;
+			}
+			for (const [option, description] of options) {
+				if (!isText(option, LIMITS.word)) {
+					return `each option must be a non-empty string of at most ${LIMITS.word} characters`;
+				}
+				if (description !== null && !isText(description, LIMITS.text)) {
+					return `the description of ${option} must be null or a string of at most ${LIMITS.text} characters`;
+				}
+			}
+			return null;
+		}
 		default:
-			return "type must be noul or score";
+			return "type must be noul, score, or choice";
 	}
 }
 

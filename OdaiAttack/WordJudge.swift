@@ -40,6 +40,18 @@ nonisolated struct WordJudge: Sendable {
         ),
     ]
 
+    private static let bestAnswerID = "best_answer"
+    /// ベスト回答を選ぶ質問。選択肢は正解した言葉。1語ずつの「意外さ」なら Score の典型度でわかるので、
+    /// ここでは言葉どうしを見比べて、お題によく合っていて思いつく人が少ないものを1つ選ばせる。
+    /// 文を変えたら、proxy/src/validate.ts の制限（500文字まで）に収まるか確かめる。
+    private static let bestAnswerInstructions = "Which answer is the best answer of this round for the word-game category `topic`? The best answer fits `topic` well, and few players would think of it."
+
+    /// 言葉の判定のタイムアウトと再試行。ゲームの結果を早く出したいので、1回を短めに切って1回だけ送り直す。
+    /// （TypeSafe が混んでいると数秒〜10秒以上かかる応答が混ざるが、送り直すと速く返ることが多い）
+    static let judgmentRetry = JevRetryPolicy(maxAttempts: 2, attemptTimeout: 4, initialBackoff: 0.3, maxBackoff: 1)
+    /// ベスト回答のタイムアウトと再試行。急がないので、公式 SDK の既定値（1回10秒、0.5秒から倍々で2回まで）に合わせる。
+    static let bestAnswerRetry = JevRetryPolicy(maxAttempts: 3, attemptTimeout: 10, initialBackoff: 0.5, maxBackoff: 5)
+
     private static let logger = Logger(subsystem: "jp.hibiki.OdaiAttack", category: "Jev")
 
     private let client: any JevClient
@@ -55,17 +67,7 @@ nonisolated struct WordJudge: Sendable {
             questions: Self.questions
         )
 
-        let clock = ContinuousClock()
-        let start = clock.now
-        let response: SystemOneResponse
-        do {
-            response = try await client.systemOne(request)
-        } catch {
-            let elapsed = clock.now - start
-            Self.logger.error("Jev 失敗 \(elapsed.inMilliseconds, format: .fixed(precision: 0)) ms \(topic, privacy: .public) / \(word, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
-        let latency = clock.now - start
+        let (response, latency) = try await send(request, retry: Self.judgmentRetry, label: "\(topic) / \(word)")
 
         guard case let .noul(fitProbability)? = response.answers[Self.fitsTopicID] else {
             throw JevError.missingAnswer(questionID: Self.fitsTopicID)
@@ -89,6 +91,56 @@ nonisolated struct WordJudge: Sendable {
             inputTokens: response.usage.inputTokens
         )
     }
+
+    /// 正解した言葉（2つ以上）の中から、このラウンドのベスト回答を1つ選ぶ。
+    func bestAnswer(among words: [String], topic: String) async throws -> BestAnswer {
+        let options = Dictionary(words.map { ($0, String?.none) }, uniquingKeysWith: { first, _ in first })
+        let request = SystemOneRequest(
+            model: Self.model,
+            state: ["topic": topic],
+            questions: [Self.bestAnswerID: .choice(instructions: Self.bestAnswerInstructions, options: options)]
+        )
+        let (response, latency) = try await send(request, retry: Self.bestAnswerRetry, label: "\(topic) のベスト回答")
+
+        guard case let .choice(answer)? = response.answers[Self.bestAnswerID] else {
+            throw JevError.missingAnswer(questionID: Self.bestAnswerID)
+        }
+        let runnerUp = answer.probabilities
+            .filter { $0.key != answer.choice }
+            .max { $0.value < $1.value }?
+            .key
+
+        Self.logger.info("Jev \(latency.inMilliseconds, format: .fixed(precision: 0)) ms [\(response.model, privacy: .public)] \(topic, privacy: .public) のベスト回答（\(words.count) 語から）: \(answer.choice, privacy: .public) confidence=\(answer.confidence, format: .fixed(precision: 2))")
+
+        return BestAnswer(word: answer.choice, runnerUp: runnerUp, confidence: answer.confidence, latency: latency)
+    }
+
+    /// リクエストを送り、かかった時間（再試行した分も含む）も返す。失敗したときもかかった時間をログに出す。
+    private func send<State: Encodable & Sendable>(
+        _ request: SystemOneRequest<State>,
+        retry: JevRetryPolicy,
+        label: String
+    ) async throws -> (response: SystemOneResponse, latency: Duration) {
+        let clock = ContinuousClock()
+        let start = clock.now
+        do {
+            let response = try await client.systemOne(request, retry: retry)
+            return (response, clock.now - start)
+        } catch {
+            Self.logger.error("Jev 失敗 \((clock.now - start).inMilliseconds, format: .fixed(precision: 0)) ms \(label, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+    }
+}
+
+/// ラウンドのベスト回答。正解した言葉の中から Jev が選ぶ。
+nonisolated struct BestAnswer: Equatable, Sendable {
+    let word: String
+    /// 2番目に確率の高かった言葉。
+    let runnerUp: String?
+    /// 確率が1つの言葉に集中しているほど 1 に近い。低いほど僅差。
+    let confidence: Double
+    let latency: Duration
 }
 
 /// 1つの言葉をお題に照らして Jev で判定した結果。
@@ -104,7 +156,7 @@ nonisolated struct WordJudgment: Identifiable, Sendable {
     let typicalityConfidence: Double
     /// 最も確率の高い典型度の段階（`WordJudge.typicalityLevels` の番号）。
     let typicalityLevel: Int
-    /// `JevClient` の呼び出しにかかった時間（JSON の変換と通信を含む）。
+    /// `JevClient` の呼び出しにかかった時間（JSON の変換と通信、再試行した分を含む）。
     let latency: Duration
     /// 実際に回答したモデル（例: "jev-1.13.0"）。
     let model: String

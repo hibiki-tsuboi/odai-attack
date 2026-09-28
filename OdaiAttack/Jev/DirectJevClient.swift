@@ -28,7 +28,7 @@ nonisolated struct DirectJevClient: JevClient {
         return DirectJevClient(apiKey: key)
     }
 
-    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>) async throws -> SystemOneResponse {
-        try await SystemOneHTTP.post(request, to: Self.endpoint, headers: ["Authorization": "Bearer \(apiKey)"], session: session)
+    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>, retry: JevRetryPolicy) async throws -> SystemOneResponse {
+        try await SystemOneHTTP.post(request, to: Self.endpoint, headers: ["Authorization": "Bearer \(apiKey)"], session: session, retry: retry)
     }
 }

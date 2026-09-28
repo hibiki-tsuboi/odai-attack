@@ -27,6 +27,11 @@ nonisolated enum GameRules {
         (2.1, 1),
     ]
 
+    /// 正解した言葉がこの数以上あれば、結果画面で「今回のベスト回答」を発表する（点数は変えない）。
+    static let bestAnswerMinimumCandidates = 2
+    /// ベスト回答の確信度（Choice の confidence）がこれより低ければ僅差とみなし、2位も出す。
+    static let bestAnswerClearConfidence = 0.3
+
     enum Outcome: Equatable {
         case correct(bonus: Int)
         case wrong

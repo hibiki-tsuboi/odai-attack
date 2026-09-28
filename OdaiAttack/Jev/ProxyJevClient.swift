@@ -31,8 +31,8 @@ nonisolated struct ProxyJevClient: JevClient {
         return ProxyJevClient(endpoint: endpoint)
     }
 
-    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>) async throws -> SystemOneResponse {
-        try await SystemOneHTTP.post(request, to: endpoint, headers: [Self.installIDHeader: installID], session: session)
+    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>, retry: JevRetryPolicy) async throws -> SystemOneResponse {
+        try await SystemOneHTTP.post(request, to: endpoint, headers: [Self.installIDHeader: installID], session: session, retry: retry)
     }
 }
 

@@ -19,6 +19,15 @@ final class GameModel {
         case result
     }
 
+    /// 結果画面で発表する「今回のベスト回答」。
+    enum BestAnswerState: Equatable {
+        /// 正解した言葉が少なくて選ばない。
+        case none
+        case choosing
+        case chosen(BestAnswer)
+        case failed(String)
+    }
+
     private(set) var phase = Phase.title
     private(set) var topic = ""
     private(set) var roundEndsAt: ContinuousClock.Instant?
@@ -28,9 +37,11 @@ final class GameModel {
     private(set) var latestEntryID: UUID?
     /// 正解の結果を出すたびに増える。画面を光らせるきっかけにする。
     private(set) var correctRevealCount = 0
+    private(set) var bestAnswer = BestAnswerState.none
     private(set) var errorMessage: String?
 
     /// Jev への接続先が設定されていないと nil。
+    private let judge: WordJudge?
     private let wordList: SpokenWordList?
     private let audio = AudioIO()
     private var recognizer: SpeechWordRecognizer?
@@ -40,7 +51,9 @@ final class GameModel {
     private var roundStartedAt: ContinuousClock.Instant?
 
     init(client: (any JevClient)? = makeConfiguredJevClient()) {
-        wordList = client.map { SpokenWordList(judge: WordJudge(client: $0)) }
+        let judge = client.map { WordJudge(client: $0) }
+        self.judge = judge
+        wordList = judge.map { SpokenWordList(judge: $0) }
         wordList?.onReveal = { [weak self] entry in
             self?.didReveal(entry)
         }
@@ -71,15 +84,16 @@ final class GameModel {
 
     func start() {
         guard canStart else { return }
+        // 前のラウンドがベスト回答を選んでいる途中なら、やめる
+        roundTask?.cancel()
         roundTask = Task { await playRound() }
     }
 
     /// 遊んでいる途中ならやめて、タイトルに戻る。
     func quit() {
+        roundTask?.cancel()
         if phase == .result {
             phase = .title
-        } else {
-            roundTask?.cancel()
         }
     }
 
@@ -90,6 +104,7 @@ final class GameModel {
         wordList.topic = topic
         wordList.clear()
         latestEntryID = nil
+        bestAnswer = .none
         phase = .preparing("準備しています…")
         do {
             try await AudioIO.requestPermissions()
@@ -129,6 +144,7 @@ final class GameModel {
             await wordList.waitForJudgments(timeout: GameRules.judgmentWait)
             audio.stop()
             phase = .result
+            await chooseBestAnswer()
         } catch {
             await stopListening()
             audio.stop()
@@ -136,6 +152,26 @@ final class GameModel {
                 errorMessage = SpeechRecognitionError.describe(error)
             }
             phase = .title
+        }
+    }
+
+    /// 正解した言葉の中から、今回のベスト回答を Jev に選んでもらう。
+    private func chooseBestAnswer() async {
+        let candidates = entries
+            .filter { if case .correct = GameRules.outcome(for: $0) { true } else { false } }
+            .map(\.word)
+        guard let judge, candidates.count >= GameRules.bestAnswerMinimumCandidates else {
+            bestAnswer = .none
+            return
+        }
+        bestAnswer = .choosing
+        do {
+            let chosen = try await judge.bestAnswer(among: candidates, topic: topic)
+            guard !Task.isCancelled else { return }
+            bestAnswer = .chosen(chosen)
+        } catch {
+            guard !Task.isCancelled else { return }
+            bestAnswer = .failed(error.localizedDescription)
         }
     }
 

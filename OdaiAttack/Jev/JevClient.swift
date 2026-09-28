@@ -12,7 +12,8 @@ nonisolated protocol JevClient: Sendable {
     /// 画面に出す接続先の名前。
     var connectionName: String { get }
 
-    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>) async throws -> SystemOneResponse
+    /// `request` を送って回答を受け取る。失敗したときは `retry` に従って送り直す。
+    func systemOne<State: Encodable & Sendable>(_ request: SystemOneRequest<State>, retry: JevRetryPolicy) async throws -> SystemOneResponse
 }
 
 /// Info.plist の設定から Jev の呼び出し口を作る。中継サーバーが設定されていればそれを使い、

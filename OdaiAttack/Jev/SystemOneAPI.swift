@@ -20,6 +20,8 @@ nonisolated enum JevQuestion: Encodable, Sendable {
     case noul(instructions: String, criteria: NoulCriteria? = nil)
     /// 順序のある段階で評価する質問。`levels` は低い段階から順に並べる（2〜10個）。
     case score(instructions: String, levels: [String])
+    /// 選択肢から1つ選ぶ質問。キーが選択肢の名前（モデルにも送られる）で、値はその説明（無ければ nil）。
+    case choice(instructions: String, options: [String: String?])
 
     private enum CodingKeys: String, CodingKey {
         case type, instructions, criteria
@@ -36,6 +38,10 @@ nonisolated enum JevQuestion: Encodable, Sendable {
             try container.encode("score", forKey: .type)
             try container.encode(instructions, forKey: .instructions)
             try container.encode(levels, forKey: .criteria)
+        case let .choice(instructions, options):
+            try container.encode("choice", forKey: .type)
+            try container.encode(instructions, forKey: .instructions)
+            try container.encode(options, forKey: .criteria)
         }
     }
 }
@@ -74,7 +80,8 @@ nonisolated enum JevAnswer: Decodable, Sendable {
     /// yes の確率（0〜1）。
     case noul(Double)
     case score(ScoreAnswer)
-    /// このアプリでまだ扱っていない型（choice など）。
+    case choice(ChoiceAnswer)
+    /// このアプリでまだ扱っていない型。
     case unsupported(type: String)
 
     private enum CodingKeys: String, CodingKey {
@@ -89,6 +96,8 @@ nonisolated enum JevAnswer: Decodable, Sendable {
             self = .noul(try container.decode(Double.self, forKey: .noul))
         case "score":
             self = .score(try ScoreAnswer(from: decoder))
+        case "choice":
+            self = .choice(try ChoiceAnswer(from: decoder))
         default:
             self = .unsupported(type: type)
         }
@@ -110,4 +119,13 @@ nonisolated struct ScoreAnswer: Decodable, Sendable {
             .max { $0.probability < $1.probability }?
             .level
     }
+}
+
+nonisolated struct ChoiceAnswer: Decodable, Sendable {
+    /// いちばん確率の高い選択肢。
+    let choice: String
+    /// 確率が1つの選択肢に集中しているほど 1 に近い。
+    let confidence: Double
+    /// 選択肢ごとの確率。
+    let probabilities: [String: Double]
 }
