@@ -15,15 +15,19 @@ import os
 ///
 /// 入出力のサンプルレートなどが変わると、エンジンは自分で止まって `AVAudioEngineConfigurationChange` を出す。
 /// 初めて音声処理を有効にしたときに起き、そのままだとインストール直後の1回目だけ音声が入らなかった。
-/// 止まったら、タップを今の形式で付け直して動かし直す。
+/// 止まったら、2回目以降のプレイと同じ手順（プレイヤー・エンジン・音声セッションをすべて止めてから始め直す）で動かし直す。
+/// エンジンだけを動かし直したときは、マイクは戻っても効果音が鳴らなかった。
 final class AudioIO {
     /// 聞き始めてからこの時間たっても音声が届かなければ、1回だけ入れ直す。
     private static let audioArrivalTimeout: Duration = .seconds(1)
+    /// 1回のプレイ（`start()` から `stop()` まで）で動かし直す回数の上限。止まり続けるときに繰り返さないため。
+    private static let maxRestarts = 3
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var buffers: [SoundEffect: AVAudioPCMBuffer] = [:]
     private var isStarted = false
+    private var restartCount = 0
     /// 音声を渡している相手。聞いていないときは nil。
     private var captureTarget: SpeechWordRecognizer?
     /// タップが受け取ったバッファの数（オーディオスレッドで数える）。
@@ -54,6 +58,19 @@ final class AudioIO {
 
     /// 音声セッションとエンジンを始める。このあと効果音を鳴らせる。
     func start() throws {
+        restartCount = 0
+        if try startSessionAndEngine() {
+            // 音声処理を初めて有効にしたときは、2回目以降のプレイと同じ状態にするため、すぐに一度止めて始め直す
+            Self.logger.info("音声処理を有効にしたので、オーディオを一度止めて始め直す")
+            stopSessionAndEngine()
+            try startSessionAndEngine()
+        }
+        isStarted = true
+    }
+
+    /// 音声セッションとエンジンを始める。音声処理をこのとき切り替えたら true を返す。
+    @discardableResult
+    private func startSessionAndEngine() throws -> Bool {
         let session = AVAudioSession.sharedInstance()
         // measurement は入力の自動調整を切るモード。音声処理を使うときは組み合わせず、default にする
         let mode: AVAudioSession.Mode = SpeechTuning.usesVoiceProcessing ? .default : .measurement
@@ -62,9 +79,11 @@ final class AudioIO {
 
         // 音声処理の切り替えはエンジンが止まっているときしかできない。使えない端末でも、音声処理なしで続ける
         let input = engine.inputNode
+        var switchedVoiceProcessing = false
         if input.isVoiceProcessingEnabled != SpeechTuning.usesVoiceProcessing {
             do {
                 try input.setVoiceProcessingEnabled(SpeechTuning.usesVoiceProcessing)
+                switchedVoiceProcessing = true
             } catch {
                 Self.logger.error("音声処理を切り替えられませんでした: \(error.localizedDescription, privacy: .public)")
             }
@@ -86,16 +105,23 @@ final class AudioIO {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.restart(reason: "オーディオの設定が変わってエンジンが止まった")
+                    self?.restart(reason: "オーディオの設定が変わってエンジンが止まった", onlyIfStopped: true)
                 }
             }
         }
         engine.prepare()
         try engine.start()
         try player.playAudio()
-        isStarted = true
         let format = input.outputFormat(forBus: 0)
-        Self.logger.info("オーディオ開始: マイク \(format.sampleRate, format: .fixed(precision: 0)) Hz \(format.channelCount) ch、音声処理 \(input.isVoiceProcessingEnabled ? "あり" : "なし", privacy: .public)")
+        let outputs = session.currentRoute.outputs.map(\.portType.rawValue).joined(separator: ", ")
+        Self.logger.info("オーディオ開始: マイク \(format.sampleRate, format: .fixed(precision: 0)) Hz \(format.channelCount) ch、音声処理 \(input.isVoiceProcessingEnabled ? "あり" : "なし", privacy: .public)、音の出口 \(outputs, privacy: .public)")
+        return switchedVoiceProcessing
+    }
+
+    private func stopSessionAndEngine() {
+        player.stop()
+        engine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     /// マイクの音声を `recognizer` に流し始める。
@@ -138,9 +164,7 @@ final class AudioIO {
     func stop() {
         stopCapture()
         isStarted = false
-        player.stop()
-        engine.stop()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        stopSessionAndEngine()
     }
 
     /// 入力の今の形式でタップを付ける。
@@ -165,23 +189,29 @@ final class AudioIO {
         arrivalCheck = Task { [weak self] in
             try? await Task.sleep(for: Self.audioArrivalTimeout)
             guard !Task.isCancelled, let self, self.captureTarget != nil, self.receivedBuffers.value == countAtStart else { return }
-            self.restart(reason: "聞き始めて \(Self.audioArrivalTimeout.roundedMilliseconds) ms たっても音声が届かない")
+            self.restart(reason: "聞き始めて \(Self.audioArrivalTimeout.roundedMilliseconds) ms たっても音声が届かない", onlyIfStopped: false)
         }
     }
 
-    /// エンジンを止めてから、タップを今の形式で付け直して動かし直す。
-    private func restart(reason: String) {
-        guard isStarted else { return }
-        Self.logger.info("オーディオを動かし直す（\(reason, privacy: .public)）。エンジンは\(self.engine.isRunning ? "動いていた" : "止まっていた", privacy: .public)")
-        engine.stop()
+    /// すべて止めてから始め直し、タップを今の形式で付け直す。
+    /// `onlyIfStopped` のときは、エンジンが止まっていなければ何もしない（こちらで動かし直す前に出た、古い知らせのとき）。
+    private func restart(reason: String, onlyIfStopped: Bool) {
+        guard isStarted, !(onlyIfStopped && engine.isRunning) else { return }
+        guard restartCount < Self.maxRestarts else {
+            Self.logger.error("オーディオを \(Self.maxRestarts) 回動かし直しても安定しないので、これ以上は動かし直さない（\(reason, privacy: .public)）")
+            return
+        }
+        restartCount += 1
+        Self.logger.info("オーディオを動かし直す（\(self.restartCount) 回目: \(reason, privacy: .public)）。エンジンは\(self.engine.isRunning ? "動いていた" : "止まっていた", privacy: .public)")
+        if captureTarget != nil {
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        stopSessionAndEngine()
         do {
+            try startSessionAndEngine()
             if let captureTarget {
-                engine.inputNode.removeTap(onBus: 0)
                 try installTap(feeding: captureTarget)
             }
-            engine.prepare()
-            try engine.start()
-            try player.playAudio()
         } catch {
             Self.logger.error("オーディオを動かし直せませんでした: \(error.localizedDescription, privacy: .public)")
         }

@@ -55,7 +55,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 区切り方: 音量で話し終わり（無音）を検出したら `SpeechAnalyzer.finalize(through:)` を呼び、届いた確定結果を言葉にする。`reportingOptions` に `.frequentFinalization` が無いと、finalize しても確定結果（`isFinal`）が届かない。確定の範囲は `through` より少し後ろ（処理済みのところ）まで伸びることがある。
 - 無音の判定は、周りの騒音レベルに合わせてしきい値を動かし、話している間はしきい値を下げる（ヒステリシス）。これが無いと、騒がしいときに言葉の途中で切れた。
 - 効果音を鳴らしながら聞くので、`AudioIO` はマイクと効果音を同じ AVAudioEngine で扱い、音声処理（`setVoiceProcessingEnabled`、エコーキャンセル）を有効にしている（`SpeechTuning.usesVoiceProcessing`）。音声処理を使うときの音声セッションのモードは `.default`、使わないときは `.measurement`。さらに、効果音を拾って同じ言葉が何度も認識されても音が鳴り続けないように、重複した言葉では効果音を鳴らさない。
-- 入出力のサンプルレートなどが変わると、AVAudioEngine は自分で止まって `AVAudioEngineConfigurationChange` を出す。初めて音声処理を有効にしたときに起き、インストール直後の1回目だけ音声が入らなかった（2026-09-28 に実機で確認）。`AudioIO` はこの通知を受けて、タップを今の形式で付け直して動かし直す。さらに、聞き始めて1秒たっても音声が届かなければ1回だけ入れ直す。サンプルレートが途中で変わってもよいように、`SpeechWordRecognizer` は受け取った音声の長さを秒で数える。
+- 入出力のサンプルレートなどが変わると、AVAudioEngine は自分で止まって `AVAudioEngineConfigurationChange` を出す。初めて音声処理を有効にしたときに起き、インストール直後の1回目だけ音声が入らなかった（2026-09-28 に実機で確認）。`AudioIO` は、音声処理を初めて有効にしたらすぐに、プレイヤー・エンジン・音声セッションをすべて止めてから始め直す（2回目以降のプレイと同じ状態にする）。止まった知らせを受けたときも同じ手順で動かし直し、タップを今の形式で付け直す。エンジンだけを動かし直したときは、マイクは戻っても効果音が鳴らなかった。聞き始めて1秒たっても音声が届かなければ1回だけ入れ直し、ゲームはマイクの音声が安定して届いてからカウントダウンを始める。サンプルレートが途中で変わってもよいように、`SpeechWordRecognizer` は受け取った音声の長さを秒で数える。
 - iOS 27 で非推奨になった AVFAudio の API: `AVAudioEngine.connect(_:to:format:)` → `connectNode(_:to:format:)`、`AVAudioPlayerNode.play()` → `playAudio()`（どちらも throws）、`installTap` → `installAudioTap`。
 - `SpeechDetector` は単体では使えず、文字起こしと一緒に使っても結果が出なかったので使っていない。
 - 合成音声だと「コップ」のような短い言葉を誤認識したり、空の結果になったりする。区切りのテストでは、その2語以外を見る。
