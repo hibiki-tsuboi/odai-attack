@@ -22,29 +22,29 @@ nonisolated struct WordJudge: Sendable {
     ]
     static var maxTypicality: Int { typicalityLevels.count - 1 }
 
+    /// 言葉がお題に当てはまるか（Noul）。質問文は「判定のしくみ」画面にもそのまま出す。
+    static let fitsTopicInstructions = "Is `word` a valid answer for the word-game category `topic`?"
+    static let fitsTopicCriteria = NoulCriteria(
+        yes: "`word` is something that belongs to `topic` or typically has the quality that `topic` describes. A surprising answer still counts if it genuinely fits.",
+        no: "`word` does not fit `topic`, fits only in rare special cases, or is not a meaningful word."
+    )
+    /// どれくらい定番の答えか（Score）。段階は `typicalityLevels`。
+    static let typicalityInstructions = "How typical an answer is `word` for the word-game category `topic`?"
+
     private static let fitsTopicID = "fits_topic"
     private static let typicalityID = "typicality"
 
     // 2つの質問は同じ state に対して並列に評価されるので、1リクエストにまとめて送る。
     private static let questions: [String: JevQuestion] = [
-        fitsTopicID: .noul(
-            instructions: "Is `word` a valid answer for the word-game category `topic`?",
-            criteria: NoulCriteria(
-                yes: "`word` is something that belongs to `topic` or typically has the quality that `topic` describes. A surprising answer still counts if it genuinely fits.",
-                no: "`word` does not fit `topic`, fits only in rare special cases, or is not a meaningful word."
-            )
-        ),
-        typicalityID: .score(
-            instructions: "How typical an answer is `word` for the word-game category `topic`?",
-            levels: typicalityLevels.map(\.criterion)
-        ),
+        fitsTopicID: .noul(instructions: fitsTopicInstructions, criteria: fitsTopicCriteria),
+        typicalityID: .score(instructions: typicalityInstructions, levels: typicalityLevels.map(\.criterion)),
     ]
 
     private static let bestAnswerID = "best_answer"
-    /// ベスト回答を選ぶ質問。選択肢は正解した言葉。1語ずつの「意外さ」なら Score の典型度でわかるので、
+    /// ベスト回答を選ぶ質問（Choice）。選択肢は正解した言葉。1語ずつの「意外さ」なら Score の典型度でわかるので、
     /// ここでは言葉どうしを見比べて、お題によく合っていて思いつく人が少ないものを1つ選ばせる。
     /// 文を変えたら、proxy/src/validate.ts の制限（500文字まで）に収まるか確かめる。
-    private static let bestAnswerInstructions = "Which answer is the best answer of this round for the word-game category `topic`? The best answer fits `topic` well, and few players would think of it."
+    static let bestAnswerInstructions = "Which answer is the best answer of this round for the word-game category `topic`? The best answer fits `topic` well, and few players would think of it."
 
     /// 言葉の判定のタイムアウトと再試行。ゲームの結果を早く出したいので、1回を短めに切って1回だけ送り直す。
     /// （TypeSafe が混んでいると数秒〜10秒以上かかる応答が混ざるが、送り直すと速く返ることが多い）
@@ -76,6 +76,7 @@ nonisolated struct WordJudge: Sendable {
             throw JevError.missingAnswer(questionID: Self.typicalityID)
         }
         let level = typicality.mostLikelyLevel ?? Int(typicality.score.rounded())
+        let levelProbabilities = (0...Self.maxTypicality).map { typicality.probabilities[String($0)] ?? 0 }
 
         Self.logger.info("Jev \(latency.inMilliseconds, format: .fixed(precision: 0)) ms [\(response.model, privacy: .public)] \(topic, privacy: .public) / \(word, privacy: .public): noul=\(fitProbability, format: .fixed(precision: 2)) score=\(typicality.score, format: .fixed(precision: 2)) input_tokens=\(response.usage.inputTokens)")
 
@@ -86,6 +87,7 @@ nonisolated struct WordJudge: Sendable {
             typicality: typicality.score,
             typicalityConfidence: typicality.confidence,
             typicalityLevel: min(max(level, 0), Self.maxTypicality),
+            typicalityProbabilities: levelProbabilities,
             latency: latency,
             model: response.model,
             inputTokens: response.usage.inputTokens
@@ -105,14 +107,14 @@ nonisolated struct WordJudge: Sendable {
         guard case let .choice(answer)? = response.answers[Self.bestAnswerID] else {
             throw JevError.missingAnswer(questionID: Self.bestAnswerID)
         }
-        let runnerUp = answer.probabilities
-            .filter { $0.key != answer.choice }
-            .max { $0.value < $1.value }?
-            .key
+        // 確率の高い順。Jev が選んだもの（いちばん確率が高い）を先頭にする
+        let candidates = answer.probabilities
+            .map { BestAnswer.Candidate(word: $0.key, probability: $0.value) }
+            .sorted { ($0.word == answer.choice ? 1 : 0, $0.probability) > ($1.word == answer.choice ? 1 : 0, $1.probability) }
 
         Self.logger.info("Jev \(latency.inMilliseconds, format: .fixed(precision: 0)) ms [\(response.model, privacy: .public)] \(topic, privacy: .public) のベスト回答（\(words.count) 語から）: \(answer.choice, privacy: .public) confidence=\(answer.confidence, format: .fixed(precision: 2))")
 
-        return BestAnswer(word: answer.choice, runnerUp: runnerUp, confidence: answer.confidence, latency: latency)
+        return BestAnswer(candidates: candidates, confidence: answer.confidence, latency: latency)
     }
 
     /// リクエストを送り、かかった時間（再試行した分も含む）も返す。失敗したときもかかった時間をログに出す。
@@ -135,12 +137,20 @@ nonisolated struct WordJudge: Sendable {
 
 /// ラウンドのベスト回答。正解した言葉の中から Jev が選ぶ。
 nonisolated struct BestAnswer: Equatable, Sendable {
-    let word: String
-    /// 2番目に確率の高かった言葉。
-    let runnerUp: String?
+    nonisolated struct Candidate: Equatable, Sendable {
+        let word: String
+        let probability: Double
+    }
+
+    /// 選択肢（正解した言葉）と、それぞれが選ばれる確率。確率の高い順で、先頭がベスト回答。
+    let candidates: [Candidate]
     /// 確率が1つの言葉に集中しているほど 1 に近い。低いほど僅差。
     let confidence: Double
     let latency: Duration
+
+    var word: String { candidates.first?.word ?? "" }
+    /// 2番目に確率の高かった言葉。
+    var runnerUp: String? { candidates.dropFirst().first?.word }
 }
 
 /// 1つの言葉をお題に照らして Jev で判定した結果。
@@ -156,6 +166,8 @@ nonisolated struct WordJudgment: Identifiable, Sendable {
     let typicalityConfidence: Double
     /// 最も確率の高い典型度の段階（`WordJudge.typicalityLevels` の番号）。
     let typicalityLevel: Int
+    /// 典型度の段階ごとの確率（`WordJudge.typicalityLevels` の順）。
+    let typicalityProbabilities: [Double]
     /// `JevClient` の呼び出しにかかった時間（JSON の変換と通信、再試行した分を含む）。
     let latency: Duration
     /// 実際に回答したモデル（例: "jev-1.13.0"）。

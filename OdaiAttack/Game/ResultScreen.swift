@@ -8,6 +8,7 @@ import SwiftUI
 /// 結果の画面。得点と、言った言葉それぞれの正解・不正解と確率を出す。
 struct ResultScreen: View {
     let model: GameModel
+    @State private var showsMechanics = false
 
     /// ベスト回答に選ばれた、正解の行か（同じ言葉の「重複」の行には付けない）。
     private func isBest(_ entry: SpokenEntry) -> Bool {
@@ -62,6 +63,23 @@ struct ResultScreen: View {
                 }
             }
 
+            Section {
+                Button {
+                    showsMechanics = true
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("判定のしくみを見る")
+                            Text("TypeSafe の Jev に Noul・Score・Choice の3種類の質問をしています")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "sparkle.magnifyingglass")
+                    }
+                }
+            }
+
             Section("言った言葉") {
                 if model.entries.isEmpty {
                     Text("聞き取れた言葉はありませんでした")
@@ -73,6 +91,9 @@ struct ResultScreen: View {
             }
         }
         .animation(.spring(duration: 0.4), value: model.bestAnswer)
+        .sheet(isPresented: $showsMechanics) {
+            JudgmentMechanicsView(model: model)
+        }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 16) {
                 Button("タイトルへ") {

@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `OdaiAttack/Jev/`: System One API の型、`JevClient` プロトコル、2つの実装（`ProxyJevClient` / `DirectJevClient`、通信は共通の `SystemOneHTTP`）、設定から実装を選ぶ `makeConfiguredJevClient()`。ゲーム固有の知識は持たない。
 - `OdaiAttack/WordJudge.swift`: お題と言葉から Jev への質問（Noul: 当てはまるか / Score: 典型度）を組み立て、回答を `WordJudgment` にまとめる。質問文・Score の段階・固定するモデル版はここに集める。通信時間の計測とログもここで行う（どの `JevClient` 実装でも同じ条件で測れるように）。
-- `OdaiAttack/Game/`: ゲーム本体（フェーズ3）。`GameModel` がタイトル → お題とカウントダウン → 10秒間声で言う → 結果を進める。結果画面では、正解した言葉の中から Jev の Choice で「今回のベスト回答」を1つ選んで発表する（点数は変えない。質問は `WordJudge.bestAnswer`）。時間・正解のしきい値・点数（意外な言葉のボーナス）・ベスト回答の条件は `GameRules.swift`、お題は `Topics.swift`。
+- `OdaiAttack/Game/`: ゲーム本体（フェーズ3）。`GameModel` がタイトル → お題とカウントダウン → 10秒間声で言う → 結果を進める。結果画面では、正解した言葉の中から Jev の Choice で「今回のベスト回答」を1つ選んで発表する（点数は変えない。質問は `WordJudge.bestAnswer`）。時間・正解のしきい値・点数（意外な言葉のボーナス）・ベスト回答の条件は `GameRules.swift`、お題は `Topics.swift`。結果画面から開く「判定のしくみ」（`JudgmentMechanicsView`）は、そのラウンドの実際の確率と `WordJudge` の質問文・`GameRules` の値をそのまま使って、Noul・Score・Choice の使い方を説明する（説明の文章は手書きなので、質問やルールの意味を変えたら合わせて直す）。
 - `OdaiAttack/SpokenWordList.swift`: 声で確定した言葉を受け取り、判定を言葉ごとに並行して送り、結果を言った順に出す（前の言葉の判定を最大1秒待つ）。同じ言葉（ひらがな・カタカナなどの違いは無視）は判定しない。ゲームと音声判定画面で共有する。
 - `OdaiAttack/Speech/`: 声を言葉に区切る部分。`SpeechWordRecognizer` が音声認識と区切りを受け持ち、音声は `append(_:)` で受け取る。iOS 専用のマイクまわりは `Audio/` に分けているので、`Speech/` は Mac でもコンパイルして動かせる。区切りのパラメータはすべて `SpeechTuning.swift` にある。
 - `OdaiAttack/Audio/`: `AudioIO`（マイク入力と効果音の出力を1つの AVAudioEngine で扱う）と、コードで作る効果音 `SoundEffect`。
