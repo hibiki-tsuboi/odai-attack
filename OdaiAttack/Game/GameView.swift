@@ -51,8 +51,8 @@ private struct TitleScreen: View {
                 .multilineTextAlignment(.center)
             Spacer()
 
-            if model.isAPIKeyMissing {
-                APIKeyMissingBanner()
+            if model.isConnectionMissing {
+                ConnectionMissingBanner()
                     .padding(.horizontal)
             }
             if let errorMessage = model.errorMessage {

@@ -15,9 +15,9 @@ struct VoiceLabView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 List {
-                    if model.isAPIKeyMissing {
+                    if model.isConnectionMissing {
                         Section {
-                            APIKeyMissingBanner()
+                            ConnectionMissingBanner()
                         }
                     }
 

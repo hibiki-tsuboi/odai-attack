@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+# ローカル開発用の API キー（コミットしない）
+.dev.vars*
+.env*
+# npm run types で作られる
+worker-configuration.d.ts

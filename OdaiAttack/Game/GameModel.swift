@@ -30,7 +30,7 @@ final class GameModel {
     private(set) var correctRevealCount = 0
     private(set) var errorMessage: String?
 
-    /// API キーが設定されていないと nil。
+    /// Jev への接続先が設定されていないと nil。
     private let wordList: SpokenWordList?
     private let audio = AudioIO()
     private var recognizer: SpeechWordRecognizer?
@@ -39,14 +39,14 @@ final class GameModel {
     /// 言葉を数え始めた時刻（スタートの合図）。カウントダウン中は nil。
     private var roundStartedAt: ContinuousClock.Instant?
 
-    init(client: (any JevClient)? = DirectJevClient.fromInfoPlist()) {
+    init(client: (any JevClient)? = makeConfiguredJevClient()) {
         wordList = client.map { SpokenWordList(judge: WordJudge(client: $0)) }
         wordList?.onReveal = { [weak self] entry in
             self?.didReveal(entry)
         }
     }
 
-    var isAPIKeyMissing: Bool { wordList == nil }
+    var isConnectionMissing: Bool { wordList == nil }
 
     var canStart: Bool {
         wordList != nil && (phase == .title || phase == .result)

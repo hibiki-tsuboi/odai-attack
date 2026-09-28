@@ -25,17 +25,17 @@ final class VoiceLabModel {
     private(set) var isSpeaking = false
     private(set) var errorMessage: String?
 
-    /// API キーが設定されていないと nil。
+    /// Jev への接続先が設定されていないと nil。
     private let wordList: SpokenWordList?
     private let audio = AudioIO()
     private var recognizer: SpeechWordRecognizer?
     private var eventsTask: Task<Void, Never>?
 
-    init(client: (any JevClient)? = DirectJevClient.fromInfoPlist()) {
+    init(client: (any JevClient)? = makeConfiguredJevClient()) {
         wordList = client.map { SpokenWordList(judge: WordJudge(client: $0)) }
     }
 
-    var isAPIKeyMissing: Bool { wordList == nil }
+    var isConnectionMissing: Bool { wordList == nil }
 
     /// 確定した言葉（言った順）。
     var entries: [SpokenEntry] { wordList?.entries ?? [] }

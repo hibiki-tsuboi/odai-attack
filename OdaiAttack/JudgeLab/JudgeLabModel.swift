@@ -23,14 +23,17 @@ final class JudgeLabModel {
     private(set) var isRunning = false
     private(set) var errorMessage: String?
 
-    /// API キーが設定されていないと nil。
+    /// Jev への接続先が設定されていないと nil。
     private let judge: WordJudge?
+    /// 接続先の名前（中継サーバー経由か、TypeSafe に直接か）。
+    let connectionName: String?
 
-    init(client: (any JevClient)? = DirectJevClient.fromInfoPlist()) {
+    init(client: (any JevClient)? = makeConfiguredJevClient()) {
         judge = client.map { WordJudge(client: $0) }
+        connectionName = client?.connectionName
     }
 
-    var isAPIKeyMissing: Bool { judge == nil }
+    var isConnectionMissing: Bool { judge == nil }
 
     var canRun: Bool {
         judge != nil && !isRunning && !trimmedTopic.isEmpty && !trimmedWord.isEmpty

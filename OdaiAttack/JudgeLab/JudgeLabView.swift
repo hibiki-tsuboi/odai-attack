@@ -13,9 +13,9 @@ struct JudgeLabView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if model.isAPIKeyMissing {
+                if model.isConnectionMissing {
                     Section {
-                        APIKeyMissingBanner()
+                        ConnectionMissingBanner()
                     }
                 }
 
@@ -23,7 +23,7 @@ struct JudgeLabView: View {
                     TextField("例: 赤いもの", text: $model.topic)
                 }
 
-                Section("言葉") {
+                Section {
                     TextField("例: りんご", text: $model.word)
                         .submitLabel(.go)
                         .onSubmit(judgeOnce)
@@ -39,6 +39,12 @@ struct JudgeLabView: View {
                     .disabled(!model.canRun)
                     Button("\(JudgeLabModel.benchmarkRuns)回連続で判定", action: runBenchmark)
                         .disabled(!model.canRun)
+                } header: {
+                    Text("言葉")
+                } footer: {
+                    if let connectionName = model.connectionName {
+                        Text("接続先: \(connectionName)")
+                    }
                 }
 
                 if let errorMessage = model.errorMessage {

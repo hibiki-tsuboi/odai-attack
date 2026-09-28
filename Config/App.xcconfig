@@ -1,11 +1,18 @@
 // OdaiAttack ターゲットの共通ビルド設定（Debug / Release の両方に割り当て済み）。
 //
-// TypeSafe の API キーは同じフォルダの Secrets.xcconfig（git 管理外）に書く。
-// Secrets.xcconfig が無くてもビルドは通り、アプリ側で「API キー未設定」と表示される。
-// Secrets.xcconfig の中身は次の1行:
-//   TYPESAFE_API_KEY = <https://console.typesafe.ai/keys で発行したキー>
-// 値は引用符で囲まない（囲むと引用符ごとキーになる）。
+// Jev への接続先（どちらも無いと、アプリに「接続先が設定されていません」と出る）:
+// - JEV_PROXY_HOST: 中継サーバー（proxy/ の Cloudflare Worker）のホスト名。設定すると、こちらを優先して使う。
+//   例: odaiattack-proxy.<アカウントのサブドメイン>.workers.dev
+//   https:// は付けない（xcconfig では // から後ろがコメントになるため）。
+// - TYPESAFE_API_KEY: 開発用に TypeSafe を直接呼ぶときの API キー。同じフォルダの Secrets.xcconfig（git 管理外）に
+//   次の1行を書く（値は引用符で囲まない。囲むと引用符ごとキーになる）。Secrets.xcconfig が無くてもビルドは通る。
+//     TYPESAFE_API_KEY = <https://console.typesafe.ai/keys で発行したキー>
+
+JEV_PROXY_HOST = odaiattack-proxy.hibiki-apps.workers.dev
 
 TYPESAFE_API_KEY =
 
 #include? "Secrets.xcconfig"
+
+// Release（TestFlight・App Store 用）には API キーを入れない。中継サーバーを使う
+TYPESAFE_API_KEY[config=Release] =

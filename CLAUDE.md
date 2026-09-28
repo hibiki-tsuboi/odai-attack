@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - iPhone の音声認識で言葉を1語ずつ拾い、TypeSafe AI の Jev モデルで即座に判定する。
 - 判定の速さがゲームのテンポそのものなので、レイテンシを最優先で扱う。
 - 開発はフェーズ単位で進める。各フェーズの依頼文は `docs/prompt.md` にある。1つのフェーズを実機で確認してから次へ進む。
+- 2026-09-28 時点で `docs/prompt.md` のフェーズはすべて実装し、実機で確認済み。中継サーバーはデプロイ済みで、アプリは `JEV_PROXY_HOST` の中継サーバーを通して Jev を呼んでいる。
 
 ## Jev について
 
@@ -26,15 +27,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - SwiftUI + Swift Concurrency (async/await)。
 - Jev の呼び出しは `JevClient` プロトコルの裏に隠し、実装を差し替え可能にする。
-  - 現在: TypeSafe API を直接呼ぶ `DirectJevClient`（開発用。API キーがアプリの Info.plist に平文で入るので、TestFlight などで配る前に差し替える）
-  - 将来: 自前の中継サーバー（Cloudflare Workers 想定）経由の実装に差し替える
-- API キーはソースコードに直接書かない。`Config/Secrets.xcconfig`（.gitignore 対象）から Info.plist 経由で読み込む。
+  - `ProxyJevClient`: 自前の中継サーバー（`proxy/` の Cloudflare Worker）を通す。API キーはアプリに入らない。接続先が設定されていればこちらを使う
+  - `DirectJevClient`: TypeSafe API を直接呼ぶ（開発用）。API キーがアプリの Info.plist に平文で入るので、Release ビルドではキーを入れない
+- API キーはソースコードに直接書かない。開発用のキーは `Config/Secrets.xcconfig`（.gitignore 対象）から Info.plist 経由で読み込む。本番のキーは中継サーバーの Secret にだけ置く。
 - 通信にかかった時間（ms）を毎回計測してログに出す。
 - 外部ライブラリは極力使わない。
 
 ## コード構成
 
-- `OdaiAttack/Jev/`: System One API の型、`JevClient` プロトコル、`DirectJevClient`。ゲーム固有の知識は持たない。
+- `OdaiAttack/Jev/`: System One API の型、`JevClient` プロトコル、2つの実装（`ProxyJevClient` / `DirectJevClient`、通信は共通の `SystemOneHTTP`）、設定から実装を選ぶ `makeConfiguredJevClient()`。ゲーム固有の知識は持たない。
 - `OdaiAttack/WordJudge.swift`: お題と言葉から Jev への質問（Noul: 当てはまるか / Score: 典型度）を組み立て、回答を `WordJudgment` にまとめる。質問文・Score の段階・固定するモデル版はここに集める。通信時間の計測とログもここで行う（どの `JevClient` 実装でも同じ条件で測れるように）。
 - `OdaiAttack/Game/`: ゲーム本体（フェーズ3）。`GameModel` がタイトル → お題とカウントダウン → 10秒間声で言う → 結果を進める。時間・正解のしきい値・点数（意外な言葉のボーナス）は `GameRules.swift`、お題は `Topics.swift`。
 - `OdaiAttack/SpokenWordList.swift`: 声で確定した言葉を受け取り、判定を言葉ごとに並行して送り、結果を言った順に出す（前の言葉の判定を最大1秒待つ）。同じ言葉（ひらがな・カタカナなどの違いは無視）は判定しない。ゲームと音声判定画面で共有する。
@@ -43,7 +44,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `OdaiAttack/VoiceLab/`・`OdaiAttack/JudgeLab/`: フェーズ2・1の検証画面（声での判定と区切りの確認 / テキストでの判定とレイテンシの計測）。タイトル画面の「検証画面を開く」から、`LabsView` のシートで開く。
 - `Formatting.swift`（秒・ms・小数の表示）と `APIKeyMissingBanner` は画面どうしで共有する。
 - `tools/speech-harness/`: `SpeechWordRecognizer` を Mac で試す道具（下の「コマンド」参照）。アプリには含まれない。
-- API キーの流れ: ターゲットの Debug / Release に `Config/App.xcconfig` を割り当て、そこから `Config/Secrets.xcconfig` を `#include?` で読む（ファイルが無くてもビルドは通る）。`TYPESAFE_API_KEY` の値が `OdaiAttack/Info.plist` の `TypeSafeAPIKey` に埋め込まれ、`DirectJevClient.fromInfoPlist()` がそれを読む。
+- `proxy/`: Jev を中継する Cloudflare Worker（TypeScript、依存は wrangler と typescript だけ）。アプリと同じ形のリクエストだけを通し（`src/validate.ts`）、インストール ID（`X-OdaiAttack-Install-ID`、アプリが最初の起動で作る UUID）ごとと全体の回数を制限して、API キーを付けて TypeSafe に転送する。デプロイ手順は `proxy/README.md`。アプリの `WordJudge.model` や質問を変えたら、`proxy/wrangler.jsonc` の `ALLOWED_MODELS` と `src/validate.ts` の `LIMITS` も確かめる（モデルを上げるときは先にサーバーをデプロイする）。
+- 接続先の設定の流れ: ターゲットの Debug / Release に `Config/App.xcconfig` を割り当ててある。中継サーバーのホスト名 `JEV_PROXY_HOST` はそこに書き（xcconfig では `//` 以降がコメントになるので `https://` は付けない）、`OdaiAttack/Info.plist` の `JevProxyHost` を経て `ProxyJevClient.fromInfoPlist()` が読む。開発用の `TYPESAFE_API_KEY` は `Config/Secrets.xcconfig` を `#include?` で読み（ファイルが無くてもビルドは通る）、Info.plist の `TypeSafeAPIKey` を経て `DirectJevClient.fromInfoPlist()` が読む。`App.xcconfig` の `TYPESAFE_API_KEY[config=Release] =` で、Release ビルドにはキーを入れない（2026-09-28 に Release の .app にキーが無いことを確認）。
 
 ## 音声認識について（2026-09-28 に SDK と Mac での計測で確認したこと）
 
@@ -75,6 +77,13 @@ xcrun simctl launch "iPhone 18 Pro" jp.hibiki.OdaiAttack
 
 # 声の区切りを Mac で試す（合成音声の単語を実時間で流す。引数: 単語間の無音ms、雑音dBFS か off、単語...）
 tools/speech-harness/run.sh 400 -60
+
+# 中継サーバー（proxy/ で。最初に npm install）
+npm test                 # テスト
+npm run typecheck        # 型チェック
+npm run dev              # ローカルで動かす（API キーは proxy/.dev.vars に書く。git 管理外）
+npx wrangler deploy      # デプロイ
+npx wrangler secret put TYPESAFE_API_KEY   # API キーを Secret に登録
 ```
 
 テストターゲットはまだ無い。追加したら同じ `-scheme` と `-destination` で `xcodebuild test` を使い、1つだけ実行するときは `-only-testing:<TestTarget>/<TestClassOrSuite>/<testMethod>` を付ける。
