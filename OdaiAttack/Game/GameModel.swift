@@ -123,6 +123,8 @@ final class GameModel {
             try audio.start()
             // カウントダウン中から聞いて、周りの騒音レベルを測っておく（この間に言い終えた言葉は数えない）
             try audio.startCapture(feeding: recognizer)
+            // 音声が安定して届いてから数え始める（初回はエンジンが一度止まるので、先に鳴らした音が消えないように）
+            try await audio.waitForSteadyInput()
 
             for count in stride(from: GameRules.countdownFrom, through: 1, by: -1) {
                 phase = .countdown(count)

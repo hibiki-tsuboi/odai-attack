@@ -145,8 +145,9 @@ nonisolated final class SpeechWordRecognizer: Sendable {
             let sampleRate = buffer.format.sampleRate
             let frameCount = buffer.frameLength
             guard sampleRate > 0, frameCount > 0 else { return }
-            if !state.hasLoggedFormat {
-                state.hasLoggedFormat = true
+            // 形式は途中で変わることがある（オーディオの設定が変わって入れ直したとき）
+            if state.loggedSampleRate != sampleRate {
+                state.loggedSampleRate = sampleRate
                 Self.logger.info("音声入力 \(sampleRate, format: .fixed(precision: 0)) Hz \(buffer.format.channelCount) ch、1回 \(Double(frameCount) / sampleRate * 1000, format: .fixed(precision: 0)) ms ずつ")
             }
 
@@ -180,7 +181,7 @@ nonisolated final class SpeechWordRecognizer: Sendable {
                         case .ended(let silence):
                             signals.append(.ended(
                                 at: receivedAt - .seconds(secondsBeforeReceived + silence),
-                                audioTime: Double(state.receivedFrames + offset) / sampleRate - silence
+                                audioTime: state.receivedSeconds + Double(offset) / sampleRate - silence
                             ))
                         case nil:
                             break
@@ -188,7 +189,7 @@ nonisolated final class SpeechWordRecognizer: Sendable {
                     }
                 }
             }
-            state.receivedFrames += frameCount
+            state.receivedSeconds += Double(frameCount) / sampleRate
 
             for signal in signals {
                 signalInput.yield(signal)
@@ -254,9 +255,10 @@ nonisolated enum SpeechRecognitionError: LocalizedError {
 private nonisolated struct AudioState {
     let converter: AnalyzerInputConverter
     var detector = VoiceActivityDetector()
-    /// これまでに受け取ったフレーム数。認識側の時間軸（最初の音声からの秒数）に換算するのに使う。
-    var receivedFrames = 0
-    var hasLoggedFormat = false
+    /// これまでに受け取った音声の長さ（秒）。認識側の時間軸（最初の音声からの秒数）と同じ。
+    /// サンプルレートが途中で変わっても合うように、フレーム数ではなく秒で持つ。
+    var receivedSeconds = 0.0
+    var loggedSampleRate: Double?
 }
 
 /// オーディオスレッドから `Segmenter` へ送る、話し始め・話し終わりの知らせ。
